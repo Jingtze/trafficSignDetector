@@ -6,7 +6,7 @@ from pathlib import Path
 def segment_red_color(image_path):
     # image receive
     before_gau = cv2.imread(str(image_path))
-    cv2.imshow("",before_gau)
+
     # preprocessing
     if before_gau is None:
         print(f"Image Not Found: {image_path}")
@@ -52,8 +52,9 @@ def segment_red_color(image_path):
         elif shape == "recover":
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = float(w) / h
-            if 0.80 <= aspect_ratio <= 1.0:
-
+            print(aspect_ratio)
+            if 0.75 <= aspect_ratio <= 1.1:
+                print(1)
                 ellipse = cv2.fitEllipse(contour)
                 cv2.ellipse(filled_mask, ellipse, 255, thickness=-1)
 
@@ -71,7 +72,7 @@ def segment_red_color(image_path):
 def segment_blue_color(image_path):
     # image receive
     before_gau = cv2.imread(str(image_path))
-    cv2.imshow("", before_gau)
+
     # preprocessing
     if before_gau is None:
         print(f"Image Not Found: {image_path}")
@@ -80,6 +81,24 @@ def segment_blue_color(image_path):
     img_area = before_gau.shape[0] * before_gau.shape[1]
     image = cv2.GaussianBlur(before_gau, (3, 3), 0)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    h, s, v = cv2.split(hsv)
+
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
+    v_clahe = clahe.apply(v)
+    hsv=cv2.merge([h,s,v_clahe])
+
+    gamma = 1.5
+
+    invGamma = 1.0 / gamma
+
+    table = np.array([
+        ((i / 255.0) ** invGamma) * 255
+        for i in range(256)
+    ]).astype("uint8")
+
+    corrected = cv2.LUT(image, table)
+
 
     lower_blue = np.array([90, 100,40])
     upper_blue = np.array([130, 255, 255])
@@ -112,6 +131,7 @@ def segment_blue_color(image_path):
             x, y, w, h = cv2.boundingRect(contour)
             aspect_ratio = float(w) / h
             if 0.7 <= aspect_ratio <= 1.3:
+                print(1)
                 ellipse = cv2.fitEllipse(contour)
                 cv2.ellipse(filled_mask, ellipse, 255, thickness=-1)
 
@@ -128,7 +148,7 @@ def segment_blue_color(image_path):
 def segment_yellow_color(image_path):
     # image receive
     before_gau = cv2.imread(str(image_path))
-    cv2.imshow("", before_gau)
+
     # preprocessing
     if before_gau is None:
         print(f"Image Not Found: {image_path}")
@@ -138,7 +158,7 @@ def segment_yellow_color(image_path):
     image = cv2.GaussianBlur(before_gau, (3, 3), 0)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    lower_yellow = np.array([15, 100, 10])
+    lower_yellow = np.array([15, 90, 50])
     upper_yellow = np.array([40, 255, 255])
 
     yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
@@ -149,14 +169,31 @@ def segment_yellow_color(image_path):
     yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, kernel_open)
     yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_CLOSE, kernel_close)
 
-    cv2.imshow("1. yellow Mask", yellow_mask)
 
-    water_yellow_mask = watershed_segmentation(image, yellow_mask,3,0.5)
-    cv2.imshow("water", water_yellow_mask)
+    water_yellow_mask = watershed_segmentation(image, yellow_mask,3,0.50)
+    cv2.imshow("wateryellow",water_yellow_mask)
+
+    mask = water_yellow_mask.copy()
+
+    h, w = mask.shape[:2]
+
+    flood_mask = np.zeros(
+        (h + 2, w + 2),
+        np.uint8
+    )
+    cv2.floodFill(
+        mask,
+        flood_mask,
+        (0, 0),
+        255
+    )
+    flood_inverse = cv2.bitwise_not(mask)
+    yellow_mask = water_yellow_mask | flood_inverse
+    cv2.imshow("flood", yellow_mask)
 
     # Segmentation & Shape Checking
-    filled_mask = np.zeros_like(water_yellow_mask)
-    contours, _ = cv2.findContours(water_yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    filled_mask = np.zeros_like(yellow_mask)
+    contours, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     for contour in contours:
 
@@ -202,7 +239,8 @@ def shape_detection(contour, img_area):
 
     solidity = area / float(hull_area)
     if solidity < 0.75:
-        return None
+        print(1)
+        return "recover"
 
     if vertices == 3:
         return "triangle"
@@ -245,6 +283,5 @@ if __name__ == "__main__":
     BASE_DIR = Path(__file__).resolve().parent.parent
     image_path = BASE_DIR / "image" / "ColorInputs" / "YellowSigns"
     image_files = list(image_path.glob("*.png"))
-    #Run the optimized function against all images in the input directory
     for img_file in image_files:
         segment_yellow_color(img_file)
