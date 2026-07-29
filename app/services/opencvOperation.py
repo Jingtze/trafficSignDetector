@@ -82,23 +82,6 @@ def segment_blue_color(image_path):
     image = cv2.GaussianBlur(before_gau, (3, 3), 0)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    h, s, v = cv2.split(hsv)
-
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
-    v_clahe = clahe.apply(v)
-    hsv=cv2.merge([h,s,v_clahe])
-
-    gamma = 1.5
-
-    invGamma = 1.0 / gamma
-
-    table = np.array([
-        ((i / 255.0) ** invGamma) * 255
-        for i in range(256)
-    ]).astype("uint8")
-
-    corrected = cv2.LUT(image, table)
-
 
     lower_blue = np.array([90, 100,40])
     upper_blue = np.array([130, 255, 255])
