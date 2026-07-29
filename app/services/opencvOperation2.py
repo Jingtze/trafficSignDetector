@@ -16,7 +16,6 @@ def segment_red_color(image_path):
     image = cv2.GaussianBlur(before_gau, (3, 3), 0)
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-
     lower_red1 = np.array([0, 85, 50])
     upper_red1 = np.array([10, 255, 255])
     lower_red2 = np.array([170, 85, 50])
@@ -26,14 +25,11 @@ def segment_red_color(image_path):
     mask2 = cv2.inRange(hsv, lower_red2, upper_red2)
     red_mask = cv2.bitwise_or(mask1, mask2)
 
-
     kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
 
     red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_open)
     red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_close)
-
-
 
     water_red_mask = watershed_segmentation(image, red_mask, 3, 0.5)
 
@@ -58,13 +54,10 @@ def segment_red_color(image_path):
         cv2.drawContours(filled_mask, [contour], 0, 255, thickness=-1)
 
     segmented_sign = cv2.bitwise_and(before_gau, before_gau, mask=filled_mask)
-    cv2.imshow("segment",segmented_sign)
+    cv2.imshow("segment", segmented_sign)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
     return None
-
-
-
 
 
 def segment_blue_color(image_path):
@@ -84,9 +77,9 @@ def segment_blue_color(image_path):
 
     clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(16, 16))
     v_clahe = clahe.apply(v)
-    hsv=cv2.merge([h,s,v_clahe])
+    hsv = cv2.merge([h, s, v_clahe])
 
-    lower_blue = np.array([95, 100,40])
+    lower_blue = np.array([95, 100, 40])
     upper_blue = np.array([130, 255, 255])
 
     blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
@@ -97,10 +90,7 @@ def segment_blue_color(image_path):
     blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_OPEN, kernel_open)
     blue_mask = cv2.morphologyEx(blue_mask, cv2.MORPH_CLOSE, kernel_close)
 
-
-
-    water_blue_mask = watershed_segmentation(image, blue_mask,3,0.55)
-
+    water_blue_mask = watershed_segmentation(image, blue_mask, 3, 0.55)
 
     # Segmentation & Shape Checking
     filled_mask = np.zeros_like(water_blue_mask)
@@ -112,16 +102,14 @@ def segment_blue_color(image_path):
         if shape is None:
             continue
 
-
         cv2.drawContours(filled_mask, [contour], 0, 255, thickness=-1)
 
     segmented_sign = cv2.bitwise_and(before_gau, before_gau, mask=filled_mask)
-    cv2.imshow("segment",segmented_sign)
+    cv2.imshow("segment", segmented_sign)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
     return segmented_sign
-
 
 
 def segment_yellow_color(image_path):
@@ -158,9 +146,8 @@ def segment_yellow_color(image_path):
     yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, kernel_open)
     yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_CLOSE, kernel_close)
 
-
-    water_yellow_mask = watershed_segmentation(image, yellow_mask,3,0.50)
-    cv2.imshow("wateryellow",water_yellow_mask)
+    water_yellow_mask = watershed_segmentation(image, yellow_mask, 3, 0.50)
+    cv2.imshow("wateryellow", water_yellow_mask)
 
     mask = water_yellow_mask.copy()
 
@@ -246,6 +233,7 @@ def segment_yellow_color(image_path):
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
+
 def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
     contours, hierarchy = cv2.findContours(
         edge_mask,
@@ -303,12 +291,12 @@ def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
             bottom_points = np.delete(points, top_index, axis=0)
 
             base_y_difference = (
-                abs(bottom_points[0][1] - bottom_points[1][1])
-                / height
+                    abs(bottom_points[0][1] - bottom_points[1][1])
+                    / height
             )
             base_width_ratio = (
-                abs(bottom_points[0][0] - bottom_points[1][0])
-                / height
+                    abs(bottom_points[0][0] - bottom_points[1][0])
+                    / height
             )
             bottom_min_x = min(
                 bottom_points[0][0],
@@ -361,7 +349,7 @@ def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
             candidate_mask
         )
         yellow_ratio = (
-            cv2.countNonZero(yellow_inside) / candidate_area
+                cv2.countNonZero(yellow_inside) / candidate_area
         )
 
         if yellow_ratio < 0.03:
@@ -376,9 +364,9 @@ def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
                 nested_bonus = 0.50
 
         score = (
-            (0.25 * yellow_ratio)
-            + (3.0 * area_ratio)
-            + nested_bonus
+                (0.25 * yellow_ratio)
+                + (3.0 * area_ratio)
+                + nested_bonus
         )
 
         if len(approx) == 3 and score > best_triangle_score:
@@ -396,18 +384,18 @@ def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
             np.mean(triangle_points, axis=0).astype(float)
         )
         rectangle_contains_triangle = (
-            cv2.pointPolygonTest(
-                best_rectangle,
-                triangle_center,
-                False
-            )
-            >= 0
+                cv2.pointPolygonTest(
+                    best_rectangle,
+                    triangle_center,
+                    False
+                )
+                >= 0
         )
 
         # Keep a genuine sign board when it cleanly surrounds the triangle.
         if (
-            rectangle_contains_triangle
-            and best_rectangle_area >= best_triangle_area * 1.25
+                rectangle_contains_triangle
+                and best_rectangle_area >= best_triangle_area * 1.25
         ):
             return best_rectangle
 
@@ -415,6 +403,7 @@ def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
         return best_triangle
 
     return best_rectangle
+
 
 def shape_detection(contour, img_area):
     if len(contour) < 3:
@@ -433,9 +422,6 @@ def shape_detection(contour, img_area):
     epsilon = 0.03 * perimeter
     approx = cv2.approxPolyDP(contour, epsilon, True)
     vertices = len(approx)
-
-
-
 
     (x, y), radius = cv2.minEnclosingCircle(contour)
     circle_area = np.pi * radius * radius
@@ -460,7 +446,7 @@ def shape_detection(contour, img_area):
         return None
 
 
-def watershed_segmentation(img,mask,iterations,therehold):
+def watershed_segmentation(img, mask, iterations, therehold):
     if cv2.countNonZero(mask) == 0:
         return mask
 
@@ -480,12 +466,13 @@ def watershed_segmentation(img,mask,iterations,therehold):
 
     result = np.zeros_like(mask)
     result[markers > 1] = 255
-    
+
     return result
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 image_path = BASE_DIR / "image" / "ColorInputs"
-signs=["RedSigns","BlueSigns","YellowSigns"]
+signs = ["RedSigns", "BlueSigns", "YellowSigns"]
 image_files = list((image_path / signs[2]).glob("*.png"))
 
 for item in image_files:
