@@ -32,10 +32,10 @@ def segment_red_color(image_path):
     red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel_close)
 
     water_red_mask = watershed_segmentation(image, red_mask, 3, 0.5)
-
+    cv2.imshow("water",water_red_mask)
     # Segmentation & Shape Checking
-    filled_mask = np.zeros_like(water_red_mask)
-    contours, _ = cv2.findContours(water_red_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    filled_mask = np.zeros_like(red_mask)
+    contours, _ = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
     for contour in contours:
 
@@ -473,9 +473,9 @@ def watershed_segmentation(img, mask, iterations, therehold):
 BASE_DIR = Path(__file__).resolve().parent.parent
 image_path = BASE_DIR / "image" / "ColorInputs"
 signs = ["RedSigns", "BlueSigns", "YellowSigns"]
-image_files = list((image_path / signs[2]).glob("*.png"))
+image_files = list((image_path / signs[0]).glob("*.png"))
 
 for item in image_files:
-    segment_yellow_color(item)
+    segment_red_color(item)
 
 
