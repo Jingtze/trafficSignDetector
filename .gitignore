@@ -1,0 +1,20 @@
+# Python cache
+__pycache__/
+*.pyc
+
+# Python virtual environment
+.venv/
+
+# PyCharm
+.idea/
+
+# Your temporary/test data
+app/image/blueSample/
+app/image/redSample/
+app/image/shapeSample/
+app/image/yellowSample/
+
+# Temporary testing script
+app/services/test2.py
+app/services/test.py
+app/services/turnJason.py

@@ -1,0 +1,908 @@
+import cv2
+import numpy as np
+from pathlib import Path
+
+
+__all__ = ["segment_traffic_sign"]
+
+
+
+def segment_red_color(image_path):
+    # image receive
+    before_gau = cv2.imread(str(image_path))
+
+    # preprocessing
+    if before_gau is None:
+        print(f"Image Not Found: {image_path}")
+        return None
+    # image area
+    img_area = before_gau.shape[0] * before_gau.shape[1]
+    image = cv2.GaussianBlur(before_gau, (3,3), 0)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    #hsv threhold
+    lower1 = np.array([0, 75, 60])
+    upper1 = np.array([10, 255, 255])
+    lower2 = np.array([170, 75, 60])
+    upper2 = np.array([180, 255, 255])
+
+    mask1 = cv2.inRange(hsv, lower1, upper1)
+    mask2 = cv2.inRange(hsv, lower2, upper2)
+
+    red_mask = cv2.bitwise_or(mask1, mask2)
+
+    #morphology
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel_open)
+
+    filled_mask = np.zeros_like(red_mask)
+
+    #find contours including inner shape
+    contours, hierarchy = cv2.findContours(red_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return np.zeros_like(before_gau)
+
+    inner_found=False
+    parent=None
+    hierarchy=hierarchy[0]
+    for i, contour in enumerate(contours):
+        #search only the outer shape
+        if hierarchy[i][3]!=-1:continue
+        shape = shape_detection(contour, img_area)
+        if shape == "recover":
+            x, y, w, h = cv2.boundingRect(contour)
+            aspect_ratio = float(w) / h
+            if 0.75 <= aspect_ratio <= 1.1:
+                ellipse = cv2.fitEllipse(contour)
+                cv2.ellipse(filled_mask, ellipse, 255, thickness=-1)
+
+            continue
+        elif shape is not None:
+            cv2.drawContours(filled_mask, [contour], 0, 255, thickness=-1)
+            continue
+
+        outer_area = cv2.contourArea(contour)
+
+        if outer_area < 500:
+            continue
+
+        child = hierarchy[i][2]
+
+        # check if inner contour exists
+        while child != -1:
+
+            inner_contour = contours[child]
+
+            inner_area = cv2.contourArea(inner_contour)
+
+            ratio = inner_area / outer_area
+
+            if ratio > 0.5:
+                inner_found=True
+                parent=contour
+                cv2.drawContours(filled_mask, [inner_contour], 0, 255, thickness=-1)
+            child = hierarchy[child][0]
+
+    #red ring recovery
+    if inner_found:
+        contours, _ = cv2.findContours(
+            filled_mask,
+            cv2.RETR_EXTERNAL,
+            cv2.CHAIN_APPROX_SIMPLE
+        )
+        #find the radius and center point for the inner shape
+        inner_contour = max(contours, key=cv2.contourArea)
+        (cx, cy), inner_radius = cv2.minEnclosingCircle(inner_contour)
+
+        cx = int(cx)
+        cy = int(cy)
+        inner_radius = int(inner_radius)
+
+        best_radius = inner_radius
+        best_score = 0
+
+        # 4. Search possible outer radius
+        max_radius = inner_radius + 40
+
+        circle_boundary = np.zeros_like(filled_mask)
+        cv2.circle(
+            circle_boundary,
+            (cx, cy),
+            inner_radius,
+            255,
+            thickness=-1
+        )
+        pre_score=0
+        #the parent contour of the inner contour
+        parent_mask = np.zeros_like(red_mask)
+        cv2.drawContours(
+            parent_mask,
+            [parent],
+            -1,
+            255,
+            thickness=-1
+        )
+        #red ring recovery algorithm
+        #the inner circle will gradually increase, by increasing the radius
+        #keep record the number of pixel causing by the increase of r
+        #take the largest pixel that the R have get
+        for r in range(inner_radius+1, max_radius):
+            cv2.circle(
+                circle_boundary,
+                (cx, cy),
+                r,
+                255,
+                thickness=2
+            )
+            overlap = cv2.bitwise_and(
+                circle_boundary,
+                parent_mask
+            )
+            score = cv2.countNonZero(overlap)
+            diff_score=score-pre_score
+            #main get the best radius condition
+            if diff_score != score and diff_score>best_score:
+                best_score = diff_score
+                best_radius = r
+            pre_score=score
+        final_mask = np.zeros_like(filled_mask)
+
+        cv2.circle(
+            final_mask,
+            (cx, cy),
+            best_radius,
+            255,
+            thickness=-1
+        )
+        segment = cv2.bitwise_and(before_gau, before_gau, mask=final_mask)
+    else:
+        #no have inner shape, but detect by shape segmentation
+        segment = cv2.bitwise_and(before_gau, before_gau, mask=filled_mask)
+    return segment
+
+def segment_blue_color(image_path):
+    # image receive
+    before_gau = cv2.imread(str(image_path))
+
+    # preprocessing
+    if before_gau is None:
+        print(f"Image Not Found: {image_path}")
+        return None
+
+    img_area = before_gau.shape[0] * before_gau.shape[1]
+    image = cv2.GaussianBlur(before_gau, (3, 3), 0)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    lower_blue = np.array([95, 126,40])
+    upper_blue = np.array([130, 255, 255])
+
+    blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+
+
+
+
+
+    # Segmentation & Shape Checking
+    filled_mask = np.zeros_like(blue_mask)
+    contours, _ = cv2.findContours(blue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    for contour in contours:
+
+        shape = shape_detection(contour, img_area)
+        if shape is None:
+            continue
+
+
+        cv2.drawContours(filled_mask, [contour], 0, 255, thickness=-1)
+
+    segmented_sign = cv2.bitwise_and(before_gau, before_gau, mask=filled_mask)
+    return segmented_sign
+
+def segment_yellow_color(image_path):
+    # image receive
+    before_gau = cv2.imread(str(image_path))
+
+    # preprocessing
+    if before_gau is None:
+        print(f"Image Not Found: {image_path}")
+        return
+
+    img_area = before_gau.shape[0] * before_gau.shape[1]
+    image = cv2.GaussianBlur(before_gau, (3, 3), 0)
+    hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
+
+    # Prepare an edge image for the yellow shape fallback.
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    edges = cv2.Canny(gray, 50, 150)
+    edge_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
+    closed_edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, edge_kernel)
+
+    lower_yellow = np.array([15, 90, 50])
+    upper_yellow = np.array([40, 255, 255])
+
+    yellow_mask = cv2.inRange(hsv, lower_yellow, upper_yellow)
+    raw_yellow_mask = yellow_mask.copy()
+
+    kernel_open = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    kernel_close = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+
+    yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_OPEN, kernel_open)
+    yellow_mask = cv2.morphologyEx(yellow_mask, cv2.MORPH_CLOSE, kernel_close)
+
+    mask = yellow_mask.copy()
+
+    h, w = mask.shape[:2]
+
+    flood_mask = np.zeros(
+        (h + 2, w + 2),
+        np.uint8
+    )
+    cv2.floodFill(
+        mask,
+        flood_mask,
+        (0, 0),
+        255
+    )
+    flood_inverse = cv2.bitwise_not(mask)
+    yellow_mask = yellow_mask | flood_inverse
+    # Segmentation & Shape Checking
+    filled_mask = np.zeros_like(yellow_mask)
+    contours, _ = cv2.findContours(yellow_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    sign_found = False
+    image_height, image_width = yellow_mask.shape[:2]
+
+    for contour in contours:
+
+        shape = shape_detection(contour, img_area)
+        if shape is None:
+            continue
+
+        if shape in ("triangle", "rectangle"):
+            contour_area_ratio = cv2.contourArea(contour) / img_area
+            x, y, width, height = cv2.boundingRect(contour)
+
+            # Ignore masks that are clearly background rather than a sign.
+            if contour_area_ratio > 0.75:
+                continue
+
+            if shape == "rectangle":
+                aspect_ratio = width / float(height)
+                if not 0.45 <= aspect_ratio <= 2.20:
+                    continue
+
+            sign_found = True
+
+        cv2.drawContours(filled_mask, [contour], 0, 255, thickness=-1)
+
+    edge_shape = find_yellow_edge_shape(
+        closed_edges,
+        raw_yellow_mask,
+        img_area
+    )
+
+    # If normal colour and edge contours fail, suppress background texture and
+    # retry. Broken triangle sides are reconstructed from strong lines last.
+    if (
+        not sign_found
+        and (edge_shape is None or len(edge_shape) != 3)
+    ):
+        smoother_gray = cv2.GaussianBlur(gray, (7, 7), 0)
+        fallback_edges = cv2.Canny(smoother_gray, 50, 150)
+        fallback_edges = cv2.morphologyEx(
+            fallback_edges,
+            cv2.MORPH_CLOSE,
+            edge_kernel
+        )
+
+        smooth_edge_shape = find_yellow_edge_shape(
+            fallback_edges,
+            raw_yellow_mask,
+            img_area
+        )
+
+        if smooth_edge_shape is not None and len(smooth_edge_shape) == 3:
+            x, y, width, height = cv2.boundingRect(smooth_edge_shape)
+            touches_image_edge = (
+                x <= 1
+                or y <= 1
+                or x + width >= image_width - 1
+                or y + height >= image_height - 1
+            )
+            if not touches_image_edge:
+                edge_shape = smooth_edge_shape
+            else:
+                edge_shape = find_yellow_line_triangle(
+                    fallback_edges,
+                    raw_yellow_mask,
+                    img_area
+                )
+        else:
+            edge_shape = find_yellow_line_triangle(
+                fallback_edges,
+                raw_yellow_mask,
+                img_area
+            )
+
+    if edge_shape is not None:
+        edge_shape_mask = np.zeros_like(yellow_mask)
+        cv2.drawContours(
+            edge_shape_mask,
+            [edge_shape],
+            0,
+            255,
+            thickness=-1
+        )
+
+        # A two-pixel expansion helps include the thin outer border.
+        if len(edge_shape) == 3:
+            expand_kernel = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE,
+                (3, 3)
+            )
+            edge_shape_mask = cv2.dilate(
+                edge_shape_mask,
+                expand_kernel,
+                iterations=2
+            )
+
+        # Prefer a verified triangle. Use a rectangle only as a true fallback.
+        if len(edge_shape) == 3 or not sign_found:
+            filled_mask = edge_shape_mask
+
+    segmented_sign = cv2.bitwise_and(before_gau, before_gau, mask=filled_mask)
+    return segmented_sign
+
+
+def detect_sign_color(image_path):
+    """Choose the sign colour from the saturated pixels near the image centre."""
+    image = cv2.imread(str(image_path))
+    if image is None:
+        return None
+
+    blurred_image = cv2.GaussianBlur(image, (3, 3), 0)
+    hsv = cv2.cvtColor(blurred_image, cv2.COLOR_BGR2HSV)
+
+    height, width = hsv.shape[:2]
+    center_region = hsv[
+        height // 4 : height * 3 // 4,
+        width // 4 : width * 3 // 4,
+    ]
+
+    color_masks = {
+        "red": cv2.bitwise_or(
+            cv2.inRange(center_region, np.array([0, 75, 60]), np.array([10, 255, 255])),
+            cv2.inRange(center_region, np.array([170, 75, 60]), np.array([180, 255, 255])),
+        ),
+        "blue": cv2.inRange(
+            center_region, np.array([95, 126, 40]), np.array([130, 255, 255])
+        ),
+        "yellow": cv2.inRange(
+            center_region, np.array([15, 90, 50]), np.array([40, 255, 255])
+        ),
+    }
+    color_name = max(color_masks, key=lambda name: cv2.countNonZero(color_masks[name]))
+    if cv2.countNonZero(color_masks[color_name]) == 0:
+        return None
+
+    return color_name
+
+
+def segment_traffic_sign(image_path):
+    """Segment one image with the colour segmenter selected from its centre."""
+    color_name = detect_sign_color(image_path)
+    segment_functions = {
+        "red": segment_red_color,
+        "blue": segment_blue_color,
+        "yellow": segment_yellow_color,
+    }
+    if color_name is None:
+        return None
+
+    return segment_functions[color_name](image_path)
+
+def line_intersection(first_line, second_line):
+    x1, y1, x2, y2 = first_line
+    x3, y3, x4, y4 = second_line
+
+    denominator = (
+        (x1 - x2) * (y3 - y4)
+        - (y1 - y2) * (x3 - x4)
+    )
+    if abs(denominator) < 1e-6:
+        return None
+
+    x = (
+        (x1 * y2 - y1 * x2) * (x3 - x4)
+        - (x1 - x2) * (x3 * y4 - y3 * x4)
+    ) / denominator
+    y = (
+        (x1 * y2 - y1 * x2) * (y3 - y4)
+        - (y1 - y2) * (x3 * y4 - y3 * x4)
+    ) / denominator
+
+    return np.array([x, y], dtype=np.float32)
+
+def find_yellow_line_triangle(edge_mask, raw_yellow_mask, img_area):
+    image_height, image_width = edge_mask.shape[:2]
+    min_dimension = min(image_height, image_width)
+
+    detected_lines = cv2.HoughLinesP(
+        edge_mask,
+        1,
+        np.pi / 180,
+        threshold=max(10, int(min_dimension * 0.12)),
+        minLineLength=max(10, int(min_dimension * 0.18)),
+        maxLineGap=max(3, int(min_dimension * 0.08))
+    )
+    if detected_lines is None:
+        return None
+
+    line_groups = {
+        "left": [],
+        "right": [],
+        "base": []
+    }
+
+    for detected_line in np.asarray(detected_lines).reshape(-1, 4):
+        x1, y1, x2, y2 = map(int, detected_line)
+        if x2 < x1:
+            x1, y1, x2, y2 = x2, y2, x1, y1
+
+        angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
+        length = float(np.hypot(x2 - x1, y2 - y1))
+        line = (x1, y1, x2, y2)
+
+        if abs(angle) <= 20:
+            line_groups["base"].append((length, line))
+        elif -80 <= angle <= -30:
+            line_groups["left"].append((length, line))
+        elif 30 <= angle <= 80:
+            line_groups["right"].append((length, line))
+
+    for group_name in line_groups:
+        line_groups[group_name] = [
+            line
+            for _, line in sorted(
+                line_groups[group_name],
+                reverse=True
+            )[:30]
+        ]
+
+    best_triangle = None
+    best_score = -1
+
+    for left_line in line_groups["left"]:
+        for right_line in line_groups["right"]:
+            top_point = line_intersection(left_line, right_line)
+            if top_point is None:
+                continue
+
+            for base_line in line_groups["base"]:
+                bottom_left = line_intersection(left_line, base_line)
+                bottom_right = line_intersection(right_line, base_line)
+                if bottom_left is None or bottom_right is None:
+                    continue
+
+                if bottom_left[0] > bottom_right[0]:
+                    bottom_left, bottom_right = bottom_right, bottom_left
+
+                triangle_points = np.array(
+                    [top_point, bottom_left, bottom_right],
+                    dtype=np.float32
+                )
+
+                if np.any(triangle_points[:, 0] < 0):
+                    continue
+                if np.any(triangle_points[:, 0] > image_width - 1):
+                    continue
+                if np.any(triangle_points[:, 1] < 0):
+                    continue
+                if np.any(triangle_points[:, 1] > image_height - 1):
+                    continue
+
+                triangle_height = (
+                    (bottom_left[1] + bottom_right[1]) / 2
+                    - top_point[1]
+                )
+                triangle_width = bottom_right[0] - bottom_left[0]
+
+                if triangle_height < image_height * 0.15:
+                    continue
+                if not bottom_left[0] <= top_point[0] <= bottom_right[0]:
+                    continue
+                if not 0.50 <= triangle_width / triangle_height <= 2.50:
+                    continue
+
+                base_midpoint_x = (
+                    bottom_left[0] + bottom_right[0]
+                ) / 2
+                if (
+                    abs(top_point[0] - base_midpoint_x)
+                    / triangle_width
+                    > 0.15
+                ):
+                    continue
+                if (
+                    abs(bottom_left[1] - bottom_right[1])
+                    / triangle_height
+                    > 0.20
+                ):
+                    continue
+
+                triangle = np.round(
+                    triangle_points
+                ).astype(np.int32).reshape(-1, 1, 2)
+                area_ratio = cv2.contourArea(triangle) / img_area
+                if not 0.07 <= area_ratio <= 0.75:
+                    continue
+
+                triangle_mask = np.zeros_like(raw_yellow_mask)
+                cv2.drawContours(
+                    triangle_mask,
+                    [triangle],
+                    0,
+                    255,
+                    thickness=-1
+                )
+                triangle_area = cv2.countNonZero(triangle_mask)
+                if triangle_area == 0:
+                    continue
+
+                yellow_inside = cv2.bitwise_and(
+                    raw_yellow_mask,
+                    triangle_mask
+                )
+                yellow_ratio = (
+                    cv2.countNonZero(yellow_inside)
+                    / triangle_area
+                )
+                if yellow_ratio < 0.03:
+                    continue
+
+                triangle_border = np.zeros_like(raw_yellow_mask)
+                cv2.drawContours(
+                    triangle_border,
+                    [triangle],
+                    0,
+                    255,
+                    thickness=2
+                )
+                border_area = cv2.countNonZero(triangle_border)
+                edge_support = (
+                    cv2.countNonZero(
+                        cv2.bitwise_and(edge_mask, triangle_border)
+                    )
+                    / border_area
+                )
+                if edge_support < 0.08:
+                    continue
+
+                score = (
+                    (2.0 * edge_support)
+                    + yellow_ratio
+                    + (1.5 * area_ratio)
+                )
+                if score > best_score:
+                    best_triangle = triangle
+                    best_score = score
+
+    return best_triangle
+
+def find_yellow_edge_shape(edge_mask, raw_yellow_mask, img_area):
+    contours, hierarchy = cv2.findContours(
+        edge_mask,
+        cv2.RETR_TREE,
+        cv2.CHAIN_APPROX_SIMPLE
+    )
+
+    if hierarchy is not None:
+        hierarchy = hierarchy[0]
+
+    best_triangle = None
+    best_triangle_score = -1
+    best_triangle_area = 0
+    best_rectangle = None
+    best_rectangle_score = -1
+    best_rectangle_area = 0
+    image_height, image_width = raw_yellow_mask.shape[:2]
+
+    for index, contour in enumerate(contours):
+        perimeter = cv2.arcLength(contour, True)
+        if perimeter == 0:
+            continue
+
+        approx = None
+        for epsilon_ratio in (0.02, 0.03, 0.04):
+            candidate = cv2.approxPolyDP(
+                contour,
+                epsilon_ratio * perimeter,
+                True
+            )
+            if len(candidate) in (3, 4):
+                approx = candidate
+                break
+
+        if approx is None:
+            continue
+
+        if not cv2.isContourConvex(approx):
+            continue
+
+        area = cv2.contourArea(approx)
+        if area < img_area * 0.01 or area > img_area * 0.75:
+            continue
+
+        x, y, width, height = cv2.boundingRect(approx)
+        if width == 0 or height == 0:
+            continue
+
+        fill_ratio = area / float(width * height)
+
+        if len(approx) == 3:
+            points = approx.reshape(3, 2)
+            top_index = np.argmin(points[:, 1])
+            top_point = points[top_index]
+            bottom_points = np.delete(points, top_index, axis=0)
+
+            base_y_difference = (
+                abs(bottom_points[0][1] - bottom_points[1][1])
+                / height
+            )
+            base_width_ratio = (
+                abs(bottom_points[0][0] - bottom_points[1][0])
+                / height
+            )
+            bottom_min_x = min(
+                bottom_points[0][0],
+                bottom_points[1][0]
+            )
+            bottom_max_x = max(
+                bottom_points[0][0],
+                bottom_points[1][0]
+            )
+
+            # Reject flat or sideways triangles created by symbols and borders.
+            if fill_ratio < 0.25:
+                continue
+            if base_y_difference > 0.30:
+                continue
+            if not bottom_min_x <= top_point[0] <= bottom_max_x:
+                continue
+            if not 0.50 <= base_width_ratio <= 2.50:
+                continue
+
+        else:
+            aspect_ratio = width / float(height)
+
+            # A sign board should be rectangular and should not extend into
+            # the post or background at the bottom of the image.
+            if fill_ratio < 0.55:
+                continue
+            if not 0.45 <= aspect_ratio <= 2.20:
+                continue
+            if y + height >= image_height - 1:
+                continue
+            if width >= image_width * 0.95:
+                continue
+
+        candidate_mask = np.zeros_like(raw_yellow_mask)
+        cv2.drawContours(
+            candidate_mask,
+            [approx],
+            0,
+            255,
+            thickness=-1
+        )
+
+        candidate_area = cv2.countNonZero(candidate_mask)
+        if candidate_area == 0:
+            continue
+
+        yellow_inside = cv2.bitwise_and(
+            raw_yellow_mask,
+            candidate_mask
+        )
+        yellow_ratio = (
+            cv2.countNonZero(yellow_inside) / candidate_area
+        )
+
+        if yellow_ratio < 0.03:
+            continue
+
+        area_ratio = area / img_area
+        nested_bonus = 0
+        if hierarchy is not None:
+            has_child = hierarchy[index][2] != -1
+            has_parent = hierarchy[index][3] != -1
+            if has_child or has_parent:
+                nested_bonus = 0.50
+
+        score = (
+            (0.25 * yellow_ratio)
+            + (3.0 * area_ratio)
+            + nested_bonus
+        )
+
+        if len(approx) == 3 and score > best_triangle_score:
+            best_triangle = approx
+            best_triangle_score = score
+            best_triangle_area = area
+        elif len(approx) == 4 and score > best_rectangle_score:
+            best_rectangle = approx
+            best_rectangle_score = score
+            best_rectangle_area = area
+
+    if best_triangle is not None and best_rectangle is not None:
+        triangle_points = best_triangle.reshape(-1, 2)
+        triangle_center = tuple(
+            np.mean(triangle_points, axis=0).astype(float)
+        )
+        rectangle_contains_triangle = (
+            cv2.pointPolygonTest(
+                best_rectangle,
+                triangle_center,
+                False
+            )
+            >= 0
+        )
+
+        # Keep a genuine sign board when it cleanly surrounds the triangle.
+        if (
+            rectangle_contains_triangle
+            and best_rectangle_area >= best_triangle_area * 1.25
+        ):
+            return best_rectangle
+
+    if best_triangle is not None:
+        return best_triangle
+
+    return best_rectangle
+
+def shape_detection(contour, img_area):
+    if len(contour) < 3:
+        return None
+
+
+    area = cv2.contourArea(contour)
+
+
+
+    min_area = img_area * 0.03
+    if area < min_area:
+        return None
+
+    perimeter = cv2.arcLength(contour, True)
+    if perimeter == 0:
+        return None
+    epsilon = 0.02 * perimeter
+    approx = cv2.approxPolyDP(contour, epsilon, True)
+    vertices = len(approx)
+
+    (x, y), radius = cv2.minEnclosingCircle(contour)
+    circle_area = np.pi * radius * radius
+    circle_ratio = area / circle_area if circle_area > 0 else 0
+
+    circularity = ( 4 * np.pi * area) / (perimeter * perimeter)
+
+    hull = cv2.convexHull(contour)
+    hull_area = cv2.contourArea(hull)
+    solidity = area / float(hull_area)
+
+    if  solidity < 0.75:
+        return "recover"
+
+    if vertices == 3:
+        return "triangle"
+    elif vertices == 4:
+        return "rectangle"
+    elif circle_ratio > 0.80:
+
+        return "circle"
+    elif 7 <= vertices <= 9:
+        return "octagon"
+    else:
+        return None
+
+# def show_compare(img1, title1, img2, title2, window_title="Comparison",title: bool=False):
+#     def add_title(img, title):
+#         # Convert grayscale to BGR
+#         if len(img.shape) == 2:
+#             img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+#
+#         title_height = 70
+#
+#         # Create canvas with extra space at bottom
+#         canvas = np.zeros(
+#             (img.shape[0] + title_height, img.shape[1], 3),
+#             dtype=np.uint8
+#         )
+#
+#         # Put image at top
+#         canvas[:img.shape[0], :] = img
+#
+#         # Title background at bottom
+#         cv2.rectangle(
+#             canvas,
+#             (0, img.shape[0]),
+#             (img.shape[1], img.shape[0] + title_height),
+#             (50, 50, 50),
+#             -1
+#         )
+#
+#         # Auto resize text
+#         font = cv2.FONT_HERSHEY_SIMPLEX
+#         font_scale = 1
+#         thickness = 2
+#
+#         text_width, text_height = cv2.getTextSize(
+#             title,
+#             font,
+#             font_scale,
+#             thickness
+#         )[0]
+#
+#         while text_width > img.shape[1] - 20:
+#             font_scale -= 0.05
+#
+#             text_width, text_height = cv2.getTextSize(
+#                 title,
+#                 font,
+#                 font_scale,
+#                 thickness
+#             )[0]
+#
+#         # Center text horizontally
+#         x = (img.shape[1] - text_width) // 2
+#         y = img.shape[0] + 45
+#
+#         cv2.putText(
+#             canvas,
+#             title,
+#             (x, y),
+#             font,
+#             font_scale,
+#             (255, 255, 255),
+#             thickness
+#         )
+#
+#         return canvas
+#
+#     if title:
+#         img1 = add_title(img1, title1)
+#         img2 = add_title(img2, title2)
+#
+#     # Resize to same height
+#     height = max(img1.shape[0], img2.shape[0])
+#
+#     img1 = cv2.resize(
+#         img1,
+#         (img1.shape[1], height)
+#     )
+#
+#     img2 = cv2.resize(
+#         img2,
+#         (img2.shape[1], height)
+#     )
+#
+#     # Combine side by side
+#     output = np.hstack((img1, img2))
+#
+if __name__ == "__main__":
+    app_directory = Path(__file__).resolve().parent.parent
+    input_directory = app_directory / "image" / "ColorInputs"
+    result_directory = app_directory / "result"
+
+    sign_groups = (
+        ("RedSigns", segment_red_color),
+        ("BlueSigns", segment_blue_color),
+        ("YellowSigns", segment_yellow_color),
+    )
+
+    for folder_name, segment_function in sign_groups:
+        output_directory = result_directory / folder_name
+        output_directory.mkdir(parents=True, exist_ok=True)
+
+        for image_file in input_directory.joinpath(folder_name).glob("*.png"):
+            segmented_image = segment_function(image_file)
+            if segmented_image is not None:
+                cv2.imwrite(str(output_directory / image_file.name), segmented_image)
