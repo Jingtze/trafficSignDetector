@@ -68,7 +68,7 @@ def collect_symbol(sign_image, sign_mask):
 
     height, width = sign_mask.shape
 
-    border_size = max(1, round(min(height, width) * 0.07))
+    border_size = max(1, round(min(height, width) * 0.10))
 
     inside = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (border_size * 2 + 1, border_size * 2 + 1)
