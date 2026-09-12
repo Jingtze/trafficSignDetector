@@ -2,7 +2,7 @@
 
 This is the Hang-feature counterpart of ``knnClassification.py``.  It uses
 the same filtered TSRD images, filename-to-sign mapping, reproducible split,
-class balancing, and 84-image result evaluation as the Hang SVM module.
+class balancing, and 84-image ColorInputs evaluation as the Hang SVM module.
 
 Run from the repository root:
     python -m app.services.knnClassificationHang

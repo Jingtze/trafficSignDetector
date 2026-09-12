@@ -30,7 +30,9 @@ DEFAULT_FEATURE_FILE = (
     / "result"
     / "tsrd_training_features.npz"
 )
-DEFAULT_RESULT_DIRECTORY = Path(__file__).resolve().parent.parent / "result"
+DEFAULT_RESULT_DIRECTORY = (
+    Path(__file__).resolve().parent.parent / "image" / "ColorInputs"
+)
 DEFAULT_MODEL_FILE = (
     Path(__file__).resolve().parent.parent / "models" / "svm_normal_model.npz"
 )
@@ -370,7 +372,7 @@ def evaluate_result_folders(
     result_directory: str | Path = DEFAULT_RESULT_DIRECTORY,
     expected_image_count: int = 84,
 ) -> dict:
-    """Evaluate the trained model on the three fixed result-image folders."""
+    """Evaluate the trained model on the three labelled ColorInputs folders."""
     result_directory = Path(result_directory)
     feature_rows: list[np.ndarray] = []
     expected_labels: list[int] = []
@@ -382,7 +384,7 @@ def evaluate_result_folders(
         image_files = sorted(result_directory.joinpath(group_name).glob("*.png"))
         group_totals[group_name] = len(image_files)
         for image_path in image_files:
-            features = extract_segmented_result_features(image_path)
+            features = feature_extraction.extract_features(image_path)
             if features is None:
                 failed_images.append(str(image_path))
                 continue

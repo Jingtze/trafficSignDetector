@@ -2,8 +2,8 @@
 
 This is the Hang-feature counterpart of ``svmClassification.py``.  It builds
 34-value colour, outer-shape, and inner-symbol feature vectors directly from
-the filtered TSRD training images, then evaluates the fixed segmented images
-in ``app/result/BlueSigns``, ``RedSigns``, and ``YellowSigns``.
+the filtered TSRD training images, then evaluates the labelled source images
+in ``app/image/ColorInputs``.
 
 Run from the repository root:
     python -m app.services.svmClassificationHang
@@ -29,7 +29,9 @@ DEFAULT_TRAINING_DIRECTORY = (
     / "TSRDTrainingDataset"
     / "usable_training_images"
 )
-DEFAULT_RESULT_DIRECTORY = Path(__file__).resolve().parent.parent / "result"
+DEFAULT_RESULT_DIRECTORY = (
+    Path(__file__).resolve().parent.parent / "image" / "ColorInputs"
+)
 DEFAULT_MODEL_FILE = (
     Path(__file__).resolve().parent.parent / "models" / "svm_hang_model.npz"
 )
@@ -132,7 +134,7 @@ def evaluate_result_folders(
     result_directory: str | Path = DEFAULT_RESULT_DIRECTORY,
     expected_image_count: int = 84,
 ) -> dict:
-    """Evaluate a Hang-feature classifier on the fixed segmented results."""
+    """Evaluate a Hang-feature classifier on the labelled ColorInputs images."""
     result_directory = Path(result_directory)
     feature_rows: list[np.ndarray] = []
     expected_labels: list[int] = []
@@ -144,7 +146,13 @@ def evaluate_result_folders(
         image_files = sorted(result_directory.joinpath(group_name).glob("*.png"))
         group_totals[group_name] = len(image_files)
         for image_path in image_files:
-            vector = extract_segmented_result_features(image_path)
+            try:
+                vector = np.asarray(
+                    hang_features.extract_features(image_path),
+                    dtype=np.float32,
+                )
+            except (ValueError, cv2.error):
+                vector = None
             if vector is None:
                 failed_images.append(str(image_path))
                 continue
