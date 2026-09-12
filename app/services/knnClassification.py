@@ -31,6 +31,9 @@ DEFAULT_FEATURE_FILE = (
     / "tsrd_training_features.npz"
 )
 DEFAULT_RESULT_DIRECTORY = Path(__file__).resolve().parent.parent / "result"
+DEFAULT_MODEL_FILE = (
+    Path(__file__).resolve().parent.parent / "models" / "knn_normal_model.npz"
+)
 RESULT_GROUPS = ("BlueSigns", "RedSigns", "YellowSigns")
 LABEL_PATTERN = re.compile(r"(?:^|[\\/])(\d{3})(?:_|$)")
 
@@ -231,6 +234,83 @@ class KNearestNeighbor:
 
     def predict_sign(self, feature_vector: np.ndarray) -> str:
         return f"Sign {int(self.predict(feature_vector)[0])}"
+
+
+def save_knn(
+    model: KNearestNeighbor,
+    model_file: str | Path = DEFAULT_MODEL_FILE,
+) -> Path:
+    """Save a trained normal-feature k-NN model without using pickle."""
+    model_file = Path(model_file)
+    model_file.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        model_file,
+        format_version=np.asarray(1, dtype=np.int32),
+        model_kind=np.asarray("knn"),
+        feature_extractor=np.asarray("featureExtraction.py"),
+        training_features=np.asarray(model.training_features, dtype=np.float32),
+        training_labels=np.asarray(model.training_labels, dtype=np.int32),
+        feature_mean=np.asarray(model.feature_mean, dtype=np.float32),
+        feature_scale=np.asarray(model.feature_scale, dtype=np.float32),
+        neighbors=np.asarray(model.neighbors, dtype=np.int32),
+    )
+    return model_file
+
+
+def load_knn(model_file: str | Path = DEFAULT_MODEL_FILE) -> KNearestNeighbor:
+    """Load and validate a normal-feature k-NN model."""
+    model_file = Path(model_file)
+    with np.load(model_file, allow_pickle=False) as archive:
+        required = {
+            "format_version",
+            "model_kind",
+            "feature_extractor",
+            "training_features",
+            "training_labels",
+            "feature_mean",
+            "feature_scale",
+            "neighbors",
+        }
+        missing = required.difference(archive.files)
+        if missing:
+            raise ValueError(f"k-NN model is missing arrays: {sorted(missing)}")
+        version = int(np.asarray(archive["format_version"]).item())
+        model_kind = str(np.asarray(archive["model_kind"]).item())
+        extractor = str(np.asarray(archive["feature_extractor"]).item())
+        training_features = np.asarray(
+            archive["training_features"], dtype=np.float32
+        )
+        training_labels = np.asarray(archive["training_labels"], dtype=np.int32)
+        feature_mean = np.asarray(archive["feature_mean"], dtype=np.float32)
+        feature_scale = np.asarray(archive["feature_scale"], dtype=np.float32)
+        neighbors = int(np.asarray(archive["neighbors"]).item())
+
+    if version != 1 or model_kind != "knn":
+        raise ValueError(f"Unsupported k-NN model format in: {model_file}")
+    if extractor != "featureExtraction.py":
+        raise ValueError(f"Model uses {extractor}, expected featureExtraction.py")
+    if training_features.ndim != 2 or training_labels.shape != (
+        training_features.shape[0],
+    ):
+        raise ValueError("k-NN training arrays have incompatible shapes")
+    feature_length = training_features.shape[1]
+    if feature_mean.shape != (1, feature_length) or feature_scale.shape != (
+        1,
+        feature_length,
+    ):
+        raise ValueError("k-NN normalization arrays have incompatible shapes")
+    if neighbors < 1 or not all(
+        np.isfinite(array).all()
+        for array in (training_features, feature_mean, feature_scale)
+    ) or np.any(feature_scale <= 0.0):
+        raise ValueError("k-NN model contains invalid values")
+    return KNearestNeighbor(
+        training_features,
+        training_labels,
+        feature_mean,
+        feature_scale,
+        neighbors,
+    )
 
 
 def train_knn(
@@ -489,6 +569,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=2513)
     parser.add_argument("--neighbors", type=int, default=1)
     parser.add_argument("--samples-per-class", type=int, default=160)
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_FILE)
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="train again and replace the saved model",
+    )
     parser.add_argument(
         "--result-directory",
         type=Path,
@@ -496,14 +582,32 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    _, report = run_experiment(
-        args.features,
-        validation_ratio=args.validation_ratio,
-        seed=args.seed,
-        neighbors=args.neighbors,
-        samples_per_class=args.samples_per_class,
-        result_directory=args.result_directory,
-    )
+    if args.model.is_file() and not args.retrain:
+        model = load_knn(args.model)
+        report = {
+            "model": (
+                "Normalized HOG and square-root HSV features with "
+                f"{model.neighbors}-NN"
+            ),
+            "model_source": "loaded",
+            "model_file": str(args.model.resolve()),
+            "result_validation": evaluate_result_folders(
+                model,
+                result_directory=args.result_directory,
+            ),
+        }
+    else:
+        model, report = run_experiment(
+            args.features,
+            validation_ratio=args.validation_ratio,
+            seed=args.seed,
+            neighbors=args.neighbors,
+            samples_per_class=args.samples_per_class,
+            result_directory=args.result_directory,
+        )
+        save_knn(model, args.model)
+        report["model_source"] = "trained_and_saved"
+        report["model_file"] = str(args.model.resolve())
     print(json.dumps(report, indent=2))
     correct_percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {correct_percentage:.2f}%")

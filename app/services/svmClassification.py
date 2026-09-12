@@ -31,6 +31,9 @@ DEFAULT_FEATURE_FILE = (
     / "tsrd_training_features.npz"
 )
 DEFAULT_RESULT_DIRECTORY = Path(__file__).resolve().parent.parent / "result"
+DEFAULT_MODEL_FILE = (
+    Path(__file__).resolve().parent.parent / "models" / "svm_normal_model.npz"
+)
 RESULT_GROUPS = ("BlueSigns", "RedSigns", "YellowSigns")
 LABEL_PATTERN = re.compile(r"(?:^|[\\/])(\d{3})(?:_|$)")
 
@@ -163,6 +166,80 @@ class LinearSVM:
 
     def predict_sign(self, feature_vector: np.ndarray) -> str:
         return f"Sign {int(self.predict(feature_vector)[0])}"
+
+
+def save_linear_svm(
+    model: LinearSVM,
+    model_file: str | Path = DEFAULT_MODEL_FILE,
+    feature_extractor: str = "featureExtraction.py",
+) -> Path:
+    """Save a trained linear SVM as a compressed, pickle-free NPZ archive."""
+    model_file = Path(model_file)
+    model_file.parent.mkdir(parents=True, exist_ok=True)
+    np.savez_compressed(
+        model_file,
+        format_version=np.asarray(1, dtype=np.int32),
+        model_kind=np.asarray("linear_svm"),
+        feature_extractor=np.asarray(feature_extractor),
+        labels=np.asarray(model.labels, dtype=np.int32),
+        weights=np.asarray(model.weights, dtype=np.float32),
+        bias=np.asarray(model.bias, dtype=np.float32),
+        feature_mean=np.asarray(model.feature_mean, dtype=np.float32),
+        feature_scale=np.asarray(model.feature_scale, dtype=np.float32),
+    )
+    return model_file
+
+
+def load_linear_svm(
+    model_file: str | Path = DEFAULT_MODEL_FILE,
+    expected_feature_extractor: str = "featureExtraction.py",
+) -> LinearSVM:
+    """Load and validate a linear SVM saved by :func:`save_linear_svm`."""
+    model_file = Path(model_file)
+    with np.load(model_file, allow_pickle=False) as archive:
+        required = {
+            "format_version",
+            "model_kind",
+            "feature_extractor",
+            "labels",
+            "weights",
+            "bias",
+            "feature_mean",
+            "feature_scale",
+        }
+        missing = required.difference(archive.files)
+        if missing:
+            raise ValueError(f"SVM model is missing arrays: {sorted(missing)}")
+        version = int(np.asarray(archive["format_version"]).item())
+        model_kind = str(np.asarray(archive["model_kind"]).item())
+        extractor = str(np.asarray(archive["feature_extractor"]).item())
+        labels = np.asarray(archive["labels"], dtype=np.int32)
+        weights = np.asarray(archive["weights"], dtype=np.float32)
+        bias = np.asarray(archive["bias"], dtype=np.float32)
+        feature_mean = np.asarray(archive["feature_mean"], dtype=np.float32)
+        feature_scale = np.asarray(archive["feature_scale"], dtype=np.float32)
+
+    if version != 1 or model_kind != "linear_svm":
+        raise ValueError(f"Unsupported SVM model format in: {model_file}")
+    if extractor != expected_feature_extractor:
+        raise ValueError(
+            f"Model uses {extractor}, expected {expected_feature_extractor}"
+        )
+    if weights.ndim != 2 or labels.shape != (weights.shape[0],):
+        raise ValueError("SVM labels and weights have incompatible shapes")
+    if bias.shape != (weights.shape[0],):
+        raise ValueError("SVM bias and weights have incompatible shapes")
+    if feature_mean.shape != (1, weights.shape[1]) or feature_scale.shape != (
+        1,
+        weights.shape[1],
+    ):
+        raise ValueError("SVM normalization arrays have incompatible shapes")
+    if not all(
+        np.isfinite(array).all()
+        for array in (weights, bias, feature_mean, feature_scale)
+    ) or np.any(feature_scale <= 0.0):
+        raise ValueError("SVM model contains invalid numeric values")
+    return LinearSVM(labels, weights, bias, feature_mean, feature_scale)
 
 
 def train_linear_svm(
@@ -466,6 +543,12 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=2513)
     parser.add_argument("--epochs", type=int, default=120)
     parser.add_argument("--samples-per-class", type=int, default=160)
+    parser.add_argument("--model", type=Path, default=DEFAULT_MODEL_FILE)
+    parser.add_argument(
+        "--retrain",
+        action="store_true",
+        help="train again and replace the saved model",
+    )
     parser.add_argument(
         "--result-directory",
         type=Path,
@@ -473,14 +556,29 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    _, report = run_experiment(
-        args.features,
-        validation_ratio=args.validation_ratio,
-        seed=args.seed,
-        epochs=args.epochs,
-        samples_per_class=args.samples_per_class,
-        result_directory=args.result_directory,
-    )
+    if args.model.is_file() and not args.retrain:
+        model = load_linear_svm(args.model)
+        report = {
+            "model": "HOG HSV shape features with one-vs-rest linear SVM",
+            "model_source": "loaded",
+            "model_file": str(args.model.resolve()),
+            "result_validation": evaluate_result_folders(
+                model,
+                result_directory=args.result_directory,
+            ),
+        }
+    else:
+        model, report = run_experiment(
+            args.features,
+            validation_ratio=args.validation_ratio,
+            seed=args.seed,
+            epochs=args.epochs,
+            samples_per_class=args.samples_per_class,
+            result_directory=args.result_directory,
+        )
+        save_linear_svm(model, args.model)
+        report["model_source"] = "trained_and_saved"
+        report["model_file"] = str(args.model.resolve())
     print(json.dumps(report, indent=2))
     correct_percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {correct_percentage:.2f}%")
