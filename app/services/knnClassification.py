@@ -23,6 +23,7 @@ import cv2
 import numpy as np
 
 from app.services import featureExtraction as feature_extraction
+from app.services import svmClassification as svm_base
 
 
 DEFAULT_FEATURE_FILE = (
@@ -235,7 +236,7 @@ class KNearestNeighbor:
         return np.asarray(predictions, dtype=np.int32)
 
     def predict_sign(self, feature_vector: np.ndarray) -> str:
-        return f"Sign {int(self.predict(feature_vector)[0])}"
+        return svm_base.sign_description(self.predict(feature_vector)[0])
 
 
 def save_knn(
@@ -350,7 +351,7 @@ def recognition_report(expected: np.ndarray, predicted: np.ndarray) -> dict:
         selected = expected == label
         support = int(np.count_nonzero(selected))
         correct = int(np.count_nonzero(predicted[selected] == label))
-        per_class[f"Sign {int(label)}"] = {
+        per_class[svm_base.sign_description(label)] = {
             "support": support,
             "correct": correct,
             "recognition_rate": correct / support,
@@ -566,6 +567,7 @@ def run_experiment(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    svm_base.add_display_arguments(parser)
     parser.add_argument("--features", type=Path, default=DEFAULT_FEATURE_FILE)
     parser.add_argument("--validation-ratio", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=2513)
@@ -613,6 +615,7 @@ def main() -> None:
     print(json.dumps(report, indent=2))
     correct_percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {correct_percentage:.2f}%")
+    svm_base.display_predictions(model, feature_extraction, args)
 
 
 if __name__ == "__main__":

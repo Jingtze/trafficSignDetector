@@ -90,7 +90,7 @@ class HangKNearestNeighbor:
         return np.asarray(predictions, dtype=np.int32)
 
     def predict_sign(self, feature_vector: np.ndarray) -> str:
-        return f"Sign {int(self.predict(feature_vector)[0])}"
+        return classification_base.sign_description(self.predict(feature_vector)[0])
 
 
 def save_knn(
@@ -307,6 +307,7 @@ def run_experiment(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    classification_base.add_display_arguments(parser)
     parser.add_argument(
         "--training-directory",
         type=Path,
@@ -358,6 +359,7 @@ def main() -> None:
     print(json.dumps(report, indent=2))
     percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {percentage:.2f}%")
+    classification_base.display_predictions(model, hang_base.hang_features, args)
 
 
 if __name__ == "__main__":

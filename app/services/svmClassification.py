@@ -39,6 +39,104 @@ DEFAULT_MODEL_FILE = (
 RESULT_GROUPS = ("BlueSigns", "RedSigns", "YellowSigns")
 LABEL_PATTERN = re.compile(r"(?:^|[\\/])(\d{3})(?:_|$)")
 
+# One-based TSRD identifiers, checked against local images/000..057 examples.
+# Descriptive English names; not a replacement for jurisdiction-specific rules.
+SIGN_NAMES = dict(enumerate((
+    "Speed limit 5 km/h", "Speed limit 15 km/h", "Speed limit 30 km/h",
+    "Speed limit 40 km/h", "Speed limit 50 km/h", "Speed limit 60 km/h",
+    "Speed limit 70 km/h", "Speed limit 80 km/h",
+    "No straight ahead or left turn", "No straight ahead or right turn",
+    "No straight ahead", "No left turn", "No left or right turn",
+    "No right turn", "No overtaking", "No U-turn", "No motor vehicles",
+    "No sounding horn", "End of 40 km/h restriction", "End of 50 km/h restriction",
+    "Straight ahead or right", "Straight ahead", "Turn left",
+    "Turn left or right", "Turn right", "Keep left", "Keep right",
+    "Roundabout", "Motor vehicles only", "Sound horn", "Cycles only",
+    "U-turn permitted", "Two-way traffic", "Traffic signals ahead",
+    "Other danger", "Pedestrians ahead", "Cyclists ahead", "Children ahead",
+    "Double bend - first right", "Double bend - first left",
+    "Road narrows on left", "Steep descent", "Slow down",
+    "Side road junction on right", "Side road junction on left", "Village ahead",
+    "Reverse bends ahead", "Railway crossing without gates", "Roadworks",
+    "Series of bends", "Railway crossing with gates", "Accident ahead",
+    "Stop", "No vehicles", "No stopping", "No entry", "Give way",
+    "Checkpoint",
+), start=1))
+
+
+def sign_description(label: int) -> str:
+    """Keep the trained identifier while presenting its human-readable meaning."""
+    label = int(label)
+    return f"{SIGN_NAMES.get(label, 'Unknown sign')} (Sign {label})"
+
+
+def add_display_arguments(parser: argparse.ArgumentParser) -> None:
+    display = parser.add_mutually_exclusive_group()
+    display.add_argument("--show", action="store_true", dest="show",
+                         help="browse original/segmented predictions (default); any key next, Esc quits")
+    display.add_argument("--no-show", action="store_false", dest="show",
+                         help="run terminal evaluation without opening image windows")
+    parser.set_defaults(show=True)
+    parser.add_argument("--image", type=Path,
+                        help="show a single source image after the standard evaluation")
+
+
+def render_prediction(original: np.ndarray, segmented: np.ndarray | None,
+                      caption: str, filename: str) -> np.ndarray:
+    """Build an original/segmented comparison without opening a window."""
+    canvas = np.zeros((410, 960, 3), dtype=np.uint8)
+    for offset, picture in ((0, original), (480, segmented)):
+        if picture is None or picture.size == 0:
+            continue
+        height, width = picture.shape[:2]
+        ratio = min(460 / width, 300 / height)
+        resized = cv2.resize(picture, (max(1, round(width * ratio)),
+                                      max(1, round(height * ratio))))
+        h, w = resized.shape[:2]
+        x, y = offset + (480-w)//2, (310-h)//2
+        canvas[y:y+h, x:x+w] = resized
+    def text_line(text, position, max_width):
+        scale = 0.65
+        while cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, scale, 1)[0][0] > max_width:
+            scale *= 0.9
+        cv2.putText(canvas, text, position, cv2.FONT_HERSHEY_SIMPLEX,
+                    scale, (255,255,255), 1, cv2.LINE_AA)
+    text_line("Original", (12,338), 456)
+    text_line(caption, (492,338), 456)
+    text_line(filename, (12,373), 936)
+    text_line("Any key: next image    Esc: close", (12,400), 936)
+    return canvas
+
+
+def display_predictions(model, extractor, args) -> None:
+    """Optional GUI: names come only from model predictions, never filenames."""
+    if not args.show and args.image is None:
+        return
+    paths = ([args.image] if args.image is not None else
+             [p for group in RESULT_GROUPS
+              for p in sorted((args.result_directory / group).glob("*.png"))])
+    title = "Traffic sign detection"
+    try:
+        for path in paths:
+            original = cv2.imread(str(path))
+            if original is None:
+                raise ValueError(f"Cannot read image: {path}")
+            segmented = None
+            caption = "Unable to extract sign features"
+            try:
+                segmented = feature_extraction.segment_traffic_sign(path)
+                vector = extractor.extract_features(path)
+                if vector is not None:
+                    caption = sign_description(model.predict(vector)[0])
+            except (ValueError, cv2.error):
+                pass
+            print(f"{path.name}: {caption}", flush=True)
+            cv2.imshow(title, render_prediction(original, segmented, caption, path.name))
+            if cv2.waitKey(0) & 0xFF == 27:
+                break
+    finally:
+        cv2.destroyAllWindows()
+
 
 def sign_label_from_path(image_path: str) -> int:
     """Convert a stored filename prefix to the confirmed one-based sign ID."""
@@ -167,7 +265,7 @@ class LinearSVM:
         return self.labels[np.argmax(scores, axis=1)]
 
     def predict_sign(self, feature_vector: np.ndarray) -> str:
-        return f"Sign {int(self.predict(feature_vector)[0])}"
+        return sign_description(self.predict(feature_vector)[0])
 
 
 def save_linear_svm(
@@ -313,7 +411,7 @@ def recognition_report(expected: np.ndarray, predicted: np.ndarray) -> dict:
         selected = expected == label
         support = int(np.count_nonzero(selected))
         correct = int(np.count_nonzero(predicted[selected] == label))
-        per_class[f"Sign {int(label)}"] = {
+        per_class[sign_description(label)] = {
             "support": support,
             "correct": correct,
             "recognition_rate": correct / support,
@@ -540,6 +638,7 @@ def run_experiment(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    add_display_arguments(parser)
     parser.add_argument("--features", type=Path, default=DEFAULT_FEATURE_FILE)
     parser.add_argument("--validation-ratio", type=float, default=0.2)
     parser.add_argument("--seed", type=int, default=2513)
@@ -584,6 +683,7 @@ def main() -> None:
     print(json.dumps(report, indent=2))
     correct_percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {correct_percentage:.2f}%")
+    display_predictions(model, feature_extraction, args)
 
 
 if __name__ == "__main__":

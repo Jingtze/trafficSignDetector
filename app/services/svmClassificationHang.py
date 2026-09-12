@@ -320,6 +320,7 @@ def run_experiment(
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
+    svm_base.add_display_arguments(parser)
     parser.add_argument(
         "--training-directory", type=Path, default=DEFAULT_TRAINING_DIRECTORY
     )
@@ -381,6 +382,7 @@ def main() -> None:
     print(json.dumps(report, indent=2))
     percentage = report["result_validation"]["recognition_rate"] * 100.0
     print(f"Correct percentage: {percentage:.2f}%")
+    svm_base.display_predictions(model, hang_features, args)
 
 
 if __name__ == "__main__":
